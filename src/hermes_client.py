@@ -1,56 +1,191 @@
 """
-Hermes 媒体生成客户端
-- 通过 subprocess 调用 Hermes CLI
-- 可通过 .env 临时指定 provider/model，留空则使用 Hermes 默认配置
+媒体生成客户端（无 Hermes 依赖版）
+- 直接调用烈鸟 API（Gemini / OpenAI 兼容端点）
+- 支持多后端切换：gemini-3-pro-image-preview / gpt-image-2-all
 """
+import json
 import logging
 import os
-import re
-import subprocess
+import time
 from typing import Optional
+
+import requests
 
 from config import Config
 
 logger = logging.getLogger(__name__)
 
 
-class HermesMediaGenerator:
-    """通过 Hermes CLI 调用各种生图/生视频工具"""
+class MediaGenerator:
+    """直接调用烈鸟 API 生成图片"""
 
     def __init__(self):
-        self.hermes_cmd = Config.HERMES_CMD
-        self.timeout = Config.HERMES_TIMEOUT
-        self.default_tool = Config.DEFAULT_IMAGE_TOOL
         self.default_ratio = Config.DEFAULT_ASPECT_RATIO
-        self.image_provider = Config.HERMES_IMAGE_PROVIDER
-        self.image_model = Config.HERMES_IMAGE_MODEL
+        self.timeout = Config.LIENIAO_TIMEOUT
 
-    def _build_dispatch_prompt(
-        self,
-        user_prompt: str,
-        aspect_ratio: str = "portrait",
-        target_size: Optional[list] = None,
-    ) -> str:
-        """构建发送给 Hermes 的调度指令"""
-        size_hint = ""
+        # Gemini 后端配置
+        self.gemini_key = Config.LIENIAO_GEMINI_API_KEY
+        self.gemini_url = Config.LIENIAO_GEMINI_API_URL
+        self.gemini_model = Config.LIENIAO_GEMINI_MODEL
+
+        # Image2 (OpenAI 兼容) 后端配置
+        self.image2_key = Config.LIENIAO_IMAGE2_API_KEY
+        self.image2_url = Config.LIENIAO_IMAGE2_API_URL
+        self.image2_model = Config.LIENIAO_IMAGE2_MODEL
+
+        # 默认后端
+        self.default_backend = Config.LIENIAO_DEFAULT_BACKEND
+        self.fallback_to_image2 = Config.FALLBACK_TO_HERMES  # 复用配置项：fallback 到 image2
+
+        # 输出目录
+        self.output_dir = Config.LIENIAO_OUTPUT_DIR
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def _select_backend(self, prompt: str) -> str:
+        """根据用户提示词选择后端"""
+        prompt_lower = prompt.lower()
+        if any(k in prompt_lower for k in ["image2", "gpt-image-2", "openai", "dall-e"]):
+            return "image2"
+        if any(k in prompt_lower for k in ["gemini", "烈鸟", "gemini-3-pro"]):
+            return "gemini"
+        return self.default_backend
+
+    def _call_gemini(self, prompt: str, aspect_ratio: str = "portrait") -> dict:
+        """调用烈鸟 Gemini 后端"""
+        if not self.gemini_key:
+            return {"success": False, "error": "LIENIAO_GEMINI_API_KEY 未配置"}
+
+        url = self.gemini_url.format(model=self.gemini_model)
+        headers = {
+            "Authorization": f"Bearer {self.gemini_key}",
+            "Content-Type": "application/json",
+        }
+
+        # 尺寸映射
+        size_map = {
+            "portrait": {"width": 1024, "height": 1536},
+            "landscape": {"width": 1536, "height": 1024},
+            "square": {"width": 1024, "height": 1024},
+        }
+        size = size_map.get(aspect_ratio, size_map["portrait"])
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "temperature": 0.7,
+            }
+        }
+
+        try:
+            logger.info(f"[烈鸟 Gemini] 请求: {prompt[:60]}...")
+            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+
+            # 解析图片数据
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return {"success": False, "error": "Gemini 返回空 candidates"}
+
+            parts = candidates[0].get("content", {}).get("parts", [])
+            for part in parts:
+                if "inlineData" in part:
+                    import base64
+                    img_data = base64.b64decode(part["inlineData"]["data"])
+                    # 保存文件
+                    ext = part["inlineData"].get("mimeType", "image/png").split("/")[-1]
+                    if ext == "jpeg":
+                        ext = "jpg"
+                    filename = f"gemini_{int(time.time()*1000)}.{ext}"
+                    filepath = os.path.join(self.output_dir, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(img_data)
+                    return {
+                        "success": True,
+                        "image_path": filepath,
+                        "tool_used": f"lieniao/gemini/{self.gemini_model}",
+                        "error": None,
+                    }
+
+            return {"success": False, "error": "Gemini 返回中未找到图片数据"}
+
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"烈鸟 Gemini 请求失败: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": f"Gemini 处理异常: {str(e)}"}
+
+    def _call_image2(self, prompt: str, aspect_ratio: str = "portrait", target_size: Optional[list] = None) -> dict:
+        """调用烈鸟 Image2 (OpenAI 兼容) 后端"""
+        if not self.image2_key:
+            return {"success": False, "error": "LIENIAO_IMAGE2_API_KEY 未配置"}
+
+        headers = {
+            "Authorization": f"Bearer {self.image2_key}",
+            "Content-Type": "application/json",
+        }
+
+        # 尺寸映射
+        size_map = {
+            "portrait": "1024x1536",
+            "landscape": "1536x1024",
+            "square": "1024x1024",
+        }
+        size = size_map.get(aspect_ratio, "1024x1536")
         if target_size:
-            size_hint = f"目标尺寸：{target_size[0]}x{target_size[1]}。"
+            size = f"{target_size[0]}x{target_size[1]}"
 
-        dispatch = f"""你是飞书媒体生成机器人。
-请根据用户请求选择合适的生成工具：
-1. 如果用户明确指定 image2 / gpt-image-2 / OpenAI / image_generate，才调用内置 image_generate。
-2. 如果用户明确指定烈鸟 / Gemini / gemini-3-pro / Nano Banana / 即梦等模型或 skill，则调用对应 skill。
-3. 如果用户没有指定模型，默认使用烈鸟 API 调用 Gemini 3 Pro 生图，不要默认调用 image_generate。
-4. 如果是图片任务，生成完成后必须输出一行：
-IMAGE_PATH=<生成图片的绝对路径>
-5. 如果生成的是视频，输出：
-VIDEO_PATH=<生成视频的绝对路径>
-6. 不要只输出说明文字，必须实际调用工具生成文件。
+        payload = {
+            "model": self.image2_model,
+            "prompt": prompt,
+            "size": size,
+            "n": 1,
+        }
 
-用户原始请求：{user_prompt}
-要求比例：{aspect_ratio}
-{size_hint}"""
-        return dispatch
+        try:
+            logger.info(f"[烈鸟 Image2] 请求: {prompt[:60]}... 尺寸: {size}")
+            resp = requests.post(self.image2_url, headers=headers, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+
+            # 解析图片 URL
+            images = data.get("data", [])
+            if not images or not images[0].get("url"):
+                return {"success": False, "error": f"Image2 返回异常: {json.dumps(data)[:500]}"}
+
+            img_url = images[0]["url"]
+            # 下载图片
+            img_resp = requests.get(img_url, timeout=60)
+            img_resp.raise_for_status()
+
+            ext = "png"
+            content_type = img_resp.headers.get("Content-Type", "")
+            if "jpeg" in content_type or "jpg" in content_type:
+                ext = "jpg"
+
+            filename = f"image2_{int(time.time()*1000)}.{ext}"
+            filepath = os.path.join(self.output_dir, filename)
+            with open(filepath, "wb") as f:
+                f.write(img_resp.content)
+
+            return {
+                "success": True,
+                "image_path": filepath,
+                "tool_used": f"lieniao/image2/{self.image2_model}",
+                "error": None,
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"烈鸟 Image2 请求失败: {str(e)}"}
+        except Exception as e:
+            return {"success": False, "error": f"Image2 处理异常: {str(e)}"}
 
     def generate_image(
         self,
@@ -59,7 +194,7 @@ VIDEO_PATH=<生成视频的绝对路径>
         target_size: Optional[list] = None,
     ) -> dict:
         """
-        调用 Hermes 生成图片
+        生成图片
 
         返回:
         {
@@ -69,120 +204,21 @@ VIDEO_PATH=<生成视频的绝对路径>
             "error": str | None,
         }
         """
-        dispatch_prompt = self._build_dispatch_prompt(prompt, aspect_ratio, target_size)
+        backend = self._select_backend(prompt)
+        logger.info(f"[MediaGenerator] 选择后端: {backend}, 比例: {aspect_ratio}")
 
-        # 构建命令：如果配置了 provider/model 则临时指定，否则使用 Hermes 默认
-        cmd = [
-            self.hermes_cmd,
-            "-z",  # oneshot 模式（云端用 -z，WSL 用 -Q）
-            dispatch_prompt,
-            "-s", "image_gen,skills",
-            "--yolo",  # 自动绕过确认提示（无 TTY 环境必需）
-        ]
-        if self.image_model:
-            cmd.extend(["-m", self.image_model])
-        if self.image_provider:
-            cmd.extend(["--provider", self.image_provider])
+        if backend == "gemini":
+            result = self._call_gemini(prompt, aspect_ratio)
+            # Gemini 失败且允许 fallback，尝试 image2
+            if not result["success"] and self.fallback_to_image2 and self.image2_key:
+                logger.info(f"[MediaGenerator] Gemini 失败，fallback 到 image2: {result['error']}")
+                result = self._call_image2(prompt, aspect_ratio, target_size)
+            return result
 
-        provider_info = f"-m {self.image_model} --provider {self.image_provider}" if (self.image_model or self.image_provider) else "使用 Hermes 默认配置"
-        logger.info(
-            f"[Hermes] 执行: {self.hermes_cmd} -z '<调度指令>' "
-            f"{provider_info} -s image_gen,skills --yolo"
-        )
-
-        try:
-            # 确保 HOME 环境变量正确（Hermes 需要读取 ~/.hermes/）
-            env = os.environ.copy()
-            if "HOME" not in env:
-                env["HOME"] = os.path.expanduser("~")
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-            )
-
-            stdout = result.stdout
-            stderr = result.stderr
-
-            logger.info(f"[Hermes] stdout (前800字): {stdout[:800]}")
-            if stderr:
-                logger.warning(f"[Hermes] stderr: {stderr[:500]}")
-
-            # 解析 IMAGE_PATH
-            path_match = re.search(r"IMAGE_PATH=(.+)", stdout)
-            if path_match:
-                image_path = path_match.group(1).strip()
-                image_path = image_path.strip('"\'')
-
-                if os.path.exists(image_path):
-                    return {
-                        "success": True,
-                        "image_path": image_path,
-                        "tool_used": f"{self.image_provider or 'default'}/{self.image_model or 'default'}",
-                        "error": None,
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "image_path": None,
-                        "tool_used": None,
-                        "error": f"Hermes 报告的路径不存在: {image_path}",
-                    }
-
-            # 检查是否有 VIDEO_PATH
-            video_match = re.search(r"VIDEO_PATH=(.+)", stdout)
-            if video_match:
-                return {
-                    "success": False,
-                    "image_path": None,
-                    "tool_used": None,
-                    "error": "检测到视频输出，当前只处理图片。如需视频请直接请求视频生成。",
-                }
-
-            # 没有路径，检查是否出错
-            if result.returncode != 0:
-                return {
-                    "success": False,
-                    "image_path": None,
-                    "tool_used": None,
-                    "error": f"Hermes 退出码 {result.returncode}，输出: {stdout[:500]}",
-                }
-
-            return {
-                "success": False,
-                "image_path": None,
-                "tool_used": None,
-                "error": f"未找到 IMAGE_PATH。输出前500字: {stdout[:500]}",
-            }
-
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "image_path": None,
-                "tool_used": None,
-                "error": f"Hermes 执行超时（{self.timeout}秒）",
-            }
-        except FileNotFoundError:
-            return {
-                "success": False,
-                "image_path": None,
-                "tool_used": None,
-                "error": f"找不到 Hermes 命令: {self.hermes_cmd}，请确认 Hermes 已安装",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "image_path": None,
-                "tool_used": None,
-                "error": f"调用 Hermes 异常: {str(e)}",
-            }
+        else:  # image2
+            return self._call_image2(prompt, aspect_ratio, target_size)
 
 
-def get_hermes_generator() -> HermesMediaGenerator:
-    """工厂函数"""
-    return HermesMediaGenerator()
+def get_hermes_generator() -> MediaGenerator:
+    """工厂函数（保持兼容旧接口）"""
+    return MediaGenerator()

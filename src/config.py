@@ -19,19 +19,10 @@ class Config:
     FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
     FEISHU_ENCRYPT_KEY = os.getenv("FEISHU_ENCRYPT_KEY", "")
 
-    # Hermes 配置
-    HERMES_CMD = os.getenv("HERMES_CMD", "hermes")
-    HERMES_TIMEOUT = int(os.getenv("HERMES_TIMEOUT", "300"))
-    DEFAULT_IMAGE_TOOL = os.getenv("DEFAULT_IMAGE_TOOL", "image_generate")
+    # 图片生成默认比例
     DEFAULT_ASPECT_RATIO = os.getenv("DEFAULT_ASPECT_RATIO", "portrait")
-    ENABLE_CUSTOM_SIZE_POSTPROCESS = os.getenv("ENABLE_CUSTOM_SIZE_POSTPROCESS", "true").lower() == "true"
-
-    # 图片生成专用 provider/model（留空则使用 Hermes 默认配置）
-    HERMES_IMAGE_PROVIDER = os.getenv("HERMES_IMAGE_PROVIDER", "")
-    HERMES_IMAGE_MODEL = os.getenv("HERMES_IMAGE_MODEL", "")
 
     # 烈鸟 API 配置：默认 Gemini；用户指定 image2/gpt-image-2 时切换到 image2 分组
-    # 兼容旧 LIENIAO_API_KEY；推荐分别配置 Gemini / image2 两个分组授权码
     LIENIAO_API_KEY = os.getenv("LIENIAO_API_KEY", "")
     LIENIAO_GEMINI_API_KEY = os.getenv("LIENIAO_GEMINI_API_KEY", LIENIAO_API_KEY)
     LIENIAO_IMAGE2_API_KEY = os.getenv("LIENIAO_IMAGE2_API_KEY", LIENIAO_API_KEY)
@@ -55,6 +46,14 @@ class Config:
     PORT = int(os.getenv("PORT", "5000"))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+    # 兼容旧 Hermes 配置（不再使用，但保留读取避免报错）
+    HERMES_CMD = os.getenv("HERMES_CMD", "hermes")
+    HERMES_TIMEOUT = int(os.getenv("HERMES_TIMEOUT", "300"))
+    DEFAULT_IMAGE_TOOL = os.getenv("DEFAULT_IMAGE_TOOL", "image_generate")
+    ENABLE_CUSTOM_SIZE_POSTPROCESS = os.getenv("ENABLE_CUSTOM_SIZE_POSTPROCESS", "true").lower() == "true"
+    HERMES_IMAGE_PROVIDER = os.getenv("HERMES_IMAGE_PROVIDER", "")
+    HERMES_IMAGE_MODEL = os.getenv("HERMES_IMAGE_MODEL", "")
+
     @classmethod
     def validate(cls) -> list[str]:
         """检查必需配置是否完整，返回缺失项列表"""
@@ -63,4 +62,6 @@ class Config:
             missing.append("FEISHU_APP_ID")
         if not cls.FEISHU_APP_SECRET:
             missing.append("FEISHU_APP_SECRET")
+        if not cls.LIENIAO_GEMINI_API_KEY and not cls.LIENIAO_IMAGE2_API_KEY:
+            missing.append("LIENIAO_GEMINI_API_KEY 或 LIENIAO_IMAGE2_API_KEY")
         return missing

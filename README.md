@@ -39,20 +39,9 @@ feishu-image-bot/
 
 ## 前置条件
 
-本项目依赖 **Hermes Agent** 作为 AI 调用中枢。在部署前，请确保：
-
-1. **已安装 Hermes Agent**（CLI 命令 `hermes` 可用）
-   - Hermes 是本项目作者的 AI Agent 基础设施，负责调度各种生图/生视频工具
-   - 如果你还没有 Hermes，需要先部署：[hermes-agent 部署指南](https://github.com/hermes-agent/hermes)
-   - 或者你可以修改 `src/hermes_client.py`，将调用改为直接请求烈鸟/OpenAI API
-
-2. **有可用的生图 API 密钥**（至少一种）
-   - 烈鸟 API（Gemini / OpenAI 兼容端点）
-   - 或 OpenAI API Key
-   - 或即梦、Nano Banana 等其他支持的工具
-
-3. **有公网可访问的服务器**（或内网穿透）
-   - 飞书事件订阅需要回调到你的服务地址
+1. **飞书应用**：在[飞书开放平台](https://open.feishu.cn/app)创建应用，获取 App ID / App Secret
+2. **烈鸟 API 密钥**：在[烈鸟官网](https://lnapi.com)注册，获取 API Key（支持 Gemini 和 OpenAI 兼容两种端点）
+3. **公网服务器**（或内网穿透）：飞书事件订阅需要回调到你的服务地址
 
 ## 快速开始
 
@@ -67,7 +56,7 @@ cd feishu-image-bot
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -75,7 +64,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# 编辑 .env 文件
+# 编辑 .env 文件，填入你的密钥
 ```
 
 `.env` 中需要填写的关键配置：
@@ -83,17 +72,17 @@ cp .env.example .env
 ```env
 # 飞书应用（在飞书开放平台创建应用后获取）
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
-FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+FEISHU_APP_SECRET=xxxxxx...xxxx
 
-# Hermes 配置
-HERMES_CMD=hermes                    # Hermes CLI 命令名
-HERMES_TIMEOUT=300                   # 单次生成超时（秒）
-DEFAULT_IMAGE_TOOL=image_generate    # 默认图片工具
-DEFAULT_ASPECT_RATIO=portrait        # 默认比例
-ENABLE_CUSTOM_SIZE_POSTPROCESS=true  # 启用自定义尺寸后处理
+# 烈鸟 API（二选一或都填，推荐 Gemini 后端性价比高）
+LIENIAO_GEMINI_API_KEY=your_lieniao_key_here
+LIENIAO_IMAGE2_API_KEY=your_lieniao_key_here
+
+# 默认后端：gemini 或 image2
+LIENIAO_DEFAULT_BACKEND=gemini
 ```
 
-> **注意**：本项目不直接调用 OpenAI API，所有生图能力来自本地 Hermes 的 `image_generate` 或其他 skills。
+> **注意**：本项目不直接依赖 OpenAI API，通过烈鸟 API 调用 Gemini 3 Pro / gpt-image-2 等模型。
 
 ### 4. 启动服务
 
@@ -183,11 +172,10 @@ gunicorn -w 2 -b 0.0.0.0:5000 "src.app:create_app()"
 |---------|------|------|
 | `FEISHU_APP_ID` | 飞书应用 ID | 是 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 是 |
-| `HERMES_CMD` | Hermes CLI 命令名 | 否（默认 `hermes`） |
-| `HERMES_TIMEOUT` | Hermes 执行超时（秒） | 否（默认 300） |
-| `DEFAULT_IMAGE_TOOL` | 默认图片工具 | 否（默认 `image_generate`） |
+| `LIENIAO_GEMINI_API_KEY` | 烈鸟 Gemini 端点密钥 | 否（二选一） |
+| `LIENIAO_IMAGE2_API_KEY` | 烈鸟 Image2 (OpenAI兼容) 密钥 | 否（二选一） |
+| `LIENIAO_DEFAULT_BACKEND` | 默认后端：`gemini` 或 `image2` | 否（默认 `gemini`） |
 | `DEFAULT_ASPECT_RATIO` | 默认比例 | 否（默认 `portrait`） |
-| `ENABLE_CUSTOM_SIZE_POSTPROCESS` | 启用尺寸后处理 | 否（默认 `true`） |
 | `PORT` | 服务端口 | 否（默认 5000） |
 
 ## License
