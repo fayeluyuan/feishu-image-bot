@@ -93,9 +93,10 @@ class LieniaoImageGenerator:
     ) -> LieniaoResult:
         if not self.is_configured():
             return LieniaoResult(False, error="未配置 LIENIAO_API_KEY")
-        # 有参考图时优先强制走 Gemini 原生多模态端点；当前 image2 generations 端点不接收参考图。
-        backend = "gemini" if reference_images else self.select_backend(prompt)
+        backend = self.select_backend(prompt)
         if backend == "image2":
+            if reference_images:
+                return self._generate_image2_edit(prompt, aspect_ratio, reference_images)
             return self._generate_image2(prompt, aspect_ratio)
         return self._generate_gemini(prompt, aspect_ratio, reference_images=reference_images)
 
@@ -246,6 +247,46 @@ class LieniaoImageGenerator:
             return LieniaoResult(True, image_path=path, tool_used=f"lieniao/{model}")
         except Exception as e:
             return LieniaoResult(False, tool_used=f"lieniao/{model}", error=f"烈鸟 image2 调用异常: {e}")
+
+    def _generate_image2_edit(self, prompt: str, aspect_ratio: str, reference_images: list[str]) -> LieniaoResult:
+        """调用烈鸟 Image2 edits 端点（图生图）。"""
+        model = self.image2_model or "gpt-image-2-all"
+        url = self.image2_api_url.rstrip("/")
+        size = size_from_ratio(aspect_ratio, model)
+
+        edit_url = url.replace("/v1/images/generations", "/v1/images/edits")
+        if edit_url == url:
+            edit_url = url.rsplit("/", 1)[0] + "/edits"
+
+        data = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "response_format": "b64_json",
+        }
+        headers = {"Authorization": f"Bearer {self.image2_api_key or self.api_key}"}
+        img_path = reference_images[0]
+
+        try:
+            logger.info("[Lieniao] image2 edit 请求 model=%s size=%s", model, size)
+            with open(img_path, "rb") as image_file:
+                files = {
+                    "image": (Path(img_path).name, image_file, f"image/{Path(img_path).suffix[1:]}"),
+                }
+                resp = requests.post(edit_url, data=data, files=files, headers=headers, timeout=self.timeout)
+            if resp.status_code != 200:
+                return LieniaoResult(False, tool_used=f"lieniao/{model}", error=self._format_error(resp, model))
+            resp_data = resp.json()
+            image_data, image_url = self._extract_image_from_json(resp_data)
+            if image_url and not image_data:
+                image_data = self._download(image_url)
+            if not image_data:
+                return LieniaoResult(False, tool_used=f"lieniao/{model}", error=f"烈鸟 image2 edit 返回中未找到图片: {str(resp_data)[:500]}")
+            path = self._save_image(image_data, "lieniao_image2_edit")
+            return LieniaoResult(True, image_path=path, tool_used=f"lieniao/{model}")
+        except Exception as e:
+            return LieniaoResult(False, tool_used=f"lieniao/{model}", error=f"烈鸟 image2 edit 调用异常: {e}")
 
     def _format_error(self, resp: requests.Response, model: str) -> str:
         body = resp.text[:800]

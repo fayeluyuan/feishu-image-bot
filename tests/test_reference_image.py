@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from app import cache_reference_image, get_recent_reference_image
 from feishu_api import FeishuAPI
-from lieniao_client import LieniaoImageGenerator
+from providers.lieniao import LieniaoProvider
 
 
 def test_cache_and_get_recent_reference_image(tmp_path):
@@ -77,23 +77,25 @@ def test_gemini_payload_contains_reference_image(tmp_path):
                         "parts": [{
                             "inlineData": {
                                 "mimeType": "image/png",
-                                "data": base64.b64encode(b"generated").decode("utf-8"),
+                                "data": base64.b64encode(b"generated" * 50).decode("utf-8"),
                             }
                         }]
                     }
                 }]
             }
+        def raise_for_status(self):
+            pass
 
     def fake_post(url, json=None, headers=None, timeout=None):
         captured["payload"] = json
         captured["url"] = url
         return Resp()
 
-    gen = LieniaoImageGenerator()
+    gen = LieniaoProvider()
     gen.gemini_api_key = "sk-test"
     gen.output_dir = tmp_path
 
-    with patch("lieniao_client.requests.post", side_effect=fake_post):
+    with patch("providers.lieniao.requests.post", side_effect=fake_post):
         result = gen.generate("参考这张图生成白底图", "square", reference_images=[str(ref)])
 
     assert result.success is True

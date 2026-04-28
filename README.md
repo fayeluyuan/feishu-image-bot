@@ -1,17 +1,20 @@
 # Feishu Image Bot
 
-一个部署在飞书（Feishu/Lark）上的 AI 媒体生成机器人。
+Feishu Image Bot 是一个飞书图片生成机器人模板。用户在飞书群里 @机器人发送提示词，机器人会调用烈鸟 API / Gemini / gpt-image-2 生成图片，并自动回传到飞书。
 
-**v2.0 核心特性：通过本地 Hermes 调用各种生图工具**，不直接调用 OpenAI API，支持多模型切换。
+当前版本默认通过 Python provider 直接调用 API，不要求安装 Hermes CLI。
 
 ## 功能特性
 
-- **多工具调度**：通过 Hermes 自动选择 image_generate / 烈鸟 / Gemini / Nano Banana / 即梦 等工具
-- **尺寸/比例解析**：支持 9:16、16:9、750x1200、PPT、淘宝详情页、小红书、抖音、竖版/横版/方图等
-- **自定义尺寸后处理**：用 Pillow 将生成图片裁剪/缩放到目标尺寸
-- **并发控制**：全局锁，防止同时多个任务导致 Hermes 冲突
-- **消息去重**：防止飞书重复推送
-- **视频占位**：v1.0 提示用户需要接入视频模型
+- 飞书 webhook 接收消息
+- 支持文本生图
+- 支持先发参考图，再发提示词做图生图/参考图生成
+- 支持烈鸟 Gemini：`gemini-3-pro-image-preview`
+- 支持烈鸟 image2：`gpt-image-2-all`
+- 支持提示词触发 image2 / gpt-image-2
+- 支持生成图上传回飞书
+- 支持比例/尺寸解析（9:16、16:9、1:1、750x1200 等）
+- 支持并发锁，适合个人/小团队
 
 ## 项目结构
 
@@ -21,103 +24,69 @@ feishu-image-bot/
 │   ├── app.py              # Flask 主服务（飞书 webhook 入口）
 │   ├── config.py           # 配置管理
 │   ├── feishu_api.py       # 飞书 API 封装
-│   ├── hermes_client.py    # Hermes CLI 调用客户端（核心）
-│   ├── image_gen.py        # 图片生成适配器（调用 Hermes）
+│   ├── image_gen.py        # 图片生成适配器（调用 provider）
+│   ├── providers/          # 生图 provider 目录
+│   │   ├── lieniao.py      # 烈鸟 API（Gemini + Image2）
+│   │   ├── openai.py       # OpenAI 官方
+│   │   ├── dashscope.py    # 阿里云百炼
+│   │   └── registry.py     # provider 注册器
 │   ├── video_gen.py        # 视频生成占位
 │   └── utils.py            # 工具函数（尺寸解析、后处理、全局锁）
-├── tests/
-│   ├── test_utils.py       # 尺寸解析 + Pillow 后处理测试
-│   └── test_hermes_client.py # IMAGE_PATH 解析测试
+├── tests/                  # 测试目录
 ├── docs/
-│   └── 飞书配置教程.md      # 飞书应用配置步骤
+│   ├── 飞书配置教程.md      # 飞书应用配置步骤
+│   └── FAQ.md              # 常见问题
 ├── .env.example            # 配置模板
 ├── .gitignore
 ├── requirements.txt
 ├── README.md
+├── QUICKSTART.md           # 10 分钟本地跑通指南
+├── DEPLOY.md               # 云服务器部署指南
 └── run.py                  # 一键启动脚本
 ```
 
+## 项目背景
+
+本项目最初由 Faye 使用 Hermes/Claude 协助开发和调试，但当前运行时**不依赖 Hermes CLI**，直接通过 Python provider 调用图片生成 API。
+
 ## 前置条件
 
-1. **飞书应用**：在[飞书开放平台](https://open.feishu.cn/app)创建应用，获取 App ID / App Secret
-2. **至少一个图片生成 API**：支持烈鸟 / OpenAI / 阿里云百炼等（见下方支持列表）
-3. **公网服务器**（或内网穿透）：飞书事件订阅需要回调到你的服务地址
+1. **飞书应用**：在[飞书开放平台](https://open.feishu.cn/app)创建企业自建应用，获取 App ID / App Secret
+2. **至少一个图片生成 API Key**：支持烈鸟 Gemini / 烈鸟 image2（见下方支持列表）
+3. **公网可访问地址**（或内网穿透）：飞书事件订阅需要回调到你的服务地址
 
 ## 支持的图片生成服务
 
 | 服务 | 环境变量 | 说明 |
 |------|---------|------|
-| **烈鸟 API** | `LIENIAO_GEMINI_API_KEY` | 推荐，性价比高，支持 Gemini-3-Pro + gpt-image-2 |
+| **烈鸟 Gemini** | `LIENIAO_GEMINI_API_KEY` | 推荐，支持文本生图 + 参考图 |
+| **烈鸟 image2** | `LIENIAO_IMAGE2_API_KEY` | gpt-image-2 兼容端点，文本生图 |
 | **OpenAI 官方** | `OPENAI_API_KEY` | DALL-E 3，质量好但价格较高 |
 | **阿里云百炼** | `DASHSCOPE_API_KEY` | 通义万相，国内网络稳定 |
 | **自定义** | 自己写插件 | 放在 `PROVIDERS_DIR` 目录，自动加载 |
 
-> 可同时配置多个服务，一个失败时自动 fallback 到下一个
+> 可同时配置多个服务，一个失败时自动 fallback 到下一个。
 
 ## 快速开始
 
-### 1. 克隆项目
+详细步骤见 [QUICKSTART.md](QUICKSTART.md)。简要流程：
 
 ```bash
 git clone https://github.com/fayeluyuan/feishu-image-bot.git
 cd feishu-image-bot
-```
-
-### 2. 安装依赖
-
-```bash
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-### 3. 配置环境变量
-
-```bash
 cp .env.example .env
-# 编辑 .env 文件，填入你的密钥（至少填一个生图服务）
-```
-
-`.env` 中最简配置示例（只填你想用的）：
-
-```env
-# 飞书应用（必填）
-FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
-FEISHU_APP_SECRET=xxxxxx...xxxx
-
-# 烈鸟 API（推荐，二选一或都填）
-LIENIAO_GEMINI_API_KEY=your_lieniao_key_here
-LIENIAO_IMAGE2_API_KEY=your_lieniao_key_here
-
-# 或者 OpenAI 官方
-# OPENAI_API_KEY=sk-your-openai-key
-
-# 或者阿里云百炼
-# DASHSCOPE_API_KEY=sk-your-dashscope-key
-```
-
-> **注意**：填了哪个服务的 Key，系统就自动调用哪个。支持同时填多个，失败时自动切换。
-
-### 4. 启动服务
-
-```bash
+# 编辑 .env，填入你的密钥
 python run.py
 ```
-
-服务默认运行在 `http://0.0.0.0:5000`
-
-### 5. 配置飞书事件订阅
-
-1. 在飞书开放平台创建应用并开启机器人能力
-2. 设置事件订阅 URL 为 `http://你的服务器IP:5000/webhook`
-3. 订阅 `im.message.receive_v1` 事件
-4. 发布应用到你的企业/团队
-
-详细步骤见 [docs/飞书配置教程.md](docs/飞书配置教程.md)
 
 ## 使用方式
 
 在飞书群聊或私聊中 @机器人：
+
+### 文本生图
 
 ```
 @图片生成助手 生成一张 9:16 竖版的图：一只宇航员猫咪在月球上弹吉他
@@ -125,8 +94,8 @@ python run.py
 
 机器人会回复：
 1. "正在生成图片（9:16），请稍候..."
-2. 生成完成后发送图片预览
-3. "已生成，模型/工具：image_generate，尺寸：9:16"
+2. 生成完成后发送图片
+3. "已生成，模型/工具：lieniao/gemini-3-pro-image-preview，尺寸：9:16"
 
 ### 支持的尺寸/比例关键词
 
@@ -137,14 +106,51 @@ python run.py
 | 1:1, 方图, 正方形, 头像, 商品主图 | square |
 | 750x1200, 1024x1536, 1536x1024 等 | custom + 目标尺寸 |
 
-### 指定模型/工具
+### 如何触发 gpt-image-2 / image2
+
+默认后端由 `LIENIAO_DEFAULT_BACKEND` 控制，默认是 `gemini`。
+
+如果想在某条消息中临时使用 gpt-image-2，在提示词里加入以下任一关键词：
+
+- image2
+- image 2
+- gpt-image-2
+- gpt image 2
+- openai
+
+示例：
 
 ```
-@图片生成助手 用即梦生成一张图：赛博朋克城市
-@图片生成助手 用烈鸟 API 生成 1024x1536 的图：水彩风景
+@机器人 用 gpt-image-2 生成一张 1:1 白色极简风商品图：...
+@机器人 image2 生成一张 9:16 视频号封面：...
 ```
 
-Hermes 会根据你的提示词自动调度到对应 skill。
+如果希望默认就走 image2，可在 `.env` 中设置：
+
+```env
+LIENIAO_DEFAULT_BACKEND=image2
+```
+
+### 参考图 / 图生图怎么用
+
+1. 在飞书群里先发送一张图片给机器人。
+2. 机器人回复：收到参考图。
+3. 在有效期内发送文字提示词，例如：
+   "按刚才那张图，改成白色极简风商品主图。"
+4. 机器人会把最近一张参考图传给生成端点生成新图。
+
+**路由规则**：
+- 如果提示词包含 `image2` / `gpt image 2` / `gpt-image-2` 等关键词，带参考图会走 **image2 edits**（`/v1/images/edits`）端点。
+- 如果不写，则按 `LIENIAO_DEFAULT_BACKEND` 配置走 Gemini 或 image2。
+- image2 图生图依赖烈鸟 `/v1/images/edits` 端点和对应分组授权。
+
+参考图缓存有效期由：
+
+```env
+REFERENCE_IMAGE_TTL_SECONDS=1800
+```
+
+控制。
 
 ### 视频请求
 
@@ -165,19 +171,20 @@ Hermes 会根据你的提示词自动调度到对应 skill。
 
 ```bash
 # 编译检查
-python3 -m py_compile run.py src/*.py
+python3 -m compileall -q src tests run.py
 
 # 运行测试
-python3 tests/test_utils.py
-python3 tests/test_hermes_client.py
+for t in tests/test_*.py; do echo "--- $t ---"; python3 "$t" || exit 1; done
 ```
+
+> 部分测试需要外部 API key 的集成测试放在 `tests/integration/`，默认不运行。
 
 ## 生产环境部署
 
-使用 Gunicorn：
+详细步骤见 [DEPLOY.md](DEPLOY.md)。简要命令：
 
 ```bash
-gunicorn -w 2 -b 0.0.0.0:5000 "src.app:create_app()"
+venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 "src.app:create_app()"
 ```
 
 ## 配置说明
@@ -188,10 +195,15 @@ gunicorn -w 2 -b 0.0.0.0:5000 "src.app:create_app()"
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 是 |
 | `LIENIAO_GEMINI_API_KEY` | 烈鸟 Gemini 端点密钥 | 否（至少填一个生图服务） |
 | `LIENIAO_IMAGE2_API_KEY` | 烈鸟 Image2 (OpenAI兼容) 密钥 | 否 |
+| `LIENIAO_DEFAULT_BACKEND` | 默认后端：`gemini` 或 `image2` | 否（默认 `gemini`） |
 | `OPENAI_API_KEY` | OpenAI 官方 API 密钥 | 否 |
 | `DASHSCOPE_API_KEY` | 阿里云百炼 API 密钥 | 否 |
-| `DEFAULT_ASPECT_RATIO` | 默认比例 | 否（默认 `portrait`） |
 | `PORT` | 服务端口 | 否（默认 5000） |
+| `REFERENCE_IMAGE_TTL_SECONDS` | 参考图缓存有效期（秒） | 否（默认 1800） |
+
+## 常见问题
+
+见 [docs/FAQ.md](docs/FAQ.md)。
 
 ## License
 

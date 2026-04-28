@@ -56,7 +56,7 @@ class LieniaoProvider(BaseProvider):
     def _select_backend(self, prompt: str) -> str:
         """根据用户提示词选择后端"""
         t = (prompt or "").lower()
-        if any(k in t for k in ["image2", "image 2", "gpt-image-2", "gpt image 2", "openai"]):
+        if any(k in t for k in ["image2", "image 2", "gpt-image-2", "gpt image 2", "gpt-image-2-all", "openai"]):
             return "image2"
         if any(k in t for k in ["烈鸟", "lieniao", "lnapi", "gemini", "nano banana", "nano-banana"]):
             return "gemini"
@@ -69,9 +69,11 @@ class LieniaoProvider(BaseProvider):
         target_size: Optional[list] = None,
         reference_images: Optional[list[str]] = None,
     ) -> GenerationResult:
-        backend = "gemini" if reference_images else self._select_backend(prompt)
+        backend = self._select_backend(prompt)
 
         if backend == "image2":
+            if reference_images:
+                return self._generate_image2_edit(prompt, aspect_ratio, reference_images)
             return self._generate_image2(prompt, aspect_ratio)
         return self._generate_gemini(prompt, aspect_ratio, reference_images)
 
@@ -195,6 +197,49 @@ class LieniaoProvider(BaseProvider):
 
         except Exception as e:
             return GenerationResult(False, error=f"烈鸟 Image2 调用异常: {e}")
+
+    def _generate_image2_edit(self, prompt: str, aspect_ratio: str, reference_images: list[str]) -> GenerationResult:
+        """Image2 图生图：通过 /v1/images/edits 端点上传参考图编辑生成"""
+        model = self.image2_model
+        size = self._size_from_ratio(aspect_ratio)
+
+        # 构建 edits 端点 URL
+        edit_url = self.image2_api_url.replace("/v1/images/generations", "/v1/images/edits")
+        if edit_url == self.image2_api_url:
+            edit_url = self.image2_api_url.rstrip("/").rsplit("/", 1)[0] + "/edits"
+
+        data = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "response_format": "b64_json",
+        }
+
+        headers = {"Authorization": f"Bearer {self.image2_api_key or self.api_key}"}
+        img_path = reference_images[0]
+
+        try:
+            logger.info(f"[Lieniao] Image2 图生图请求 model={model} size={size} ref={img_path}")
+            with open(img_path, "rb") as image_file:
+                files = {
+                    "image": (Path(img_path).name, image_file, f"image/{Path(img_path).suffix[1:]}"),
+                }
+                resp = requests.post(edit_url, data=data, files=files, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            resp_data = resp.json()
+
+            image_data, image_url = self._extract_image(resp_data)
+            if image_url and not image_data:
+                image_data = requests.get(image_url, timeout=60).content
+            if not image_data:
+                return GenerationResult(False, error="烈鸟 Image2 图生图返回中未找到图片")
+
+            path = self._save_image(image_data, "lieniao_image2_edit")
+            return GenerationResult(True, image_path=path, tool_used=f"lieniao/{model}")
+
+        except Exception as e:
+            return GenerationResult(False, error=f"烈鸟 Image2 图生图调用异常: {e}")
 
     def _normalize_ratio(self, aspect_ratio: str) -> str:
         mapping = {

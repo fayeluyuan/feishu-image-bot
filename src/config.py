@@ -78,23 +78,37 @@ class Config:
     HERMES_IMAGE_PROVIDER = os.getenv("HERMES_IMAGE_PROVIDER", "")
     HERMES_IMAGE_MODEL = os.getenv("HERMES_IMAGE_MODEL", "")
 
+    @staticmethod
+    def _valid_secret(value: str) -> bool:
+        """检查配置值是否为有效密钥（排除常见占位符）"""
+        if not value:
+            return False
+        bad = {"***", "your_key_here", "your_lieniao_key_here", "your_feishu_app_secret_here",
+               "sk-xxx", "cli_xxx", "xxx", "xxxx", "xxxxxx", "xxxxxxxxxxxxxxxx"}
+        v = value.strip().lower()
+        if v in bad:
+            return False
+        if v.startswith("your_"):
+            return False
+        return True
+
     @classmethod
     def validate(cls) -> list[str]:
         """检查必需配置是否完整，返回缺失项列表"""
         missing = []
-        if not cls.FEISHU_APP_ID:
+        if not cls._valid_secret(cls.FEISHU_APP_ID):
             missing.append("FEISHU_APP_ID")
-        if not cls.FEISHU_APP_SECRET:
+        if not cls._valid_secret(cls.FEISHU_APP_SECRET):
             missing.append("FEISHU_APP_SECRET")
 
         # 检查至少配置了一个生图服务
         has_image_provider = any([
-            cls.LIENIAO_GEMINI_API_KEY,
-            cls.LIENIAO_IMAGE2_API_KEY,
-            cls.OPENAI_API_KEY,
-            cls.DASHSCOPE_API_KEY,
+            cls._valid_secret(cls.LIENIAO_GEMINI_API_KEY),
+            cls._valid_secret(cls.LIENIAO_IMAGE2_API_KEY),
+            cls._valid_secret(cls.OPENAI_API_KEY),
+            cls._valid_secret(cls.DASHSCOPE_API_KEY),
         ])
         if not has_image_provider:
-            missing.append("至少一个图片生成 API Key（LIENIAO_GEMINI_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY）")
+            missing.append("至少一个图片生成 API Key（LIENIAO_GEMINI_API_KEY / LIENIAO_IMAGE2_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY）")
 
         return missing

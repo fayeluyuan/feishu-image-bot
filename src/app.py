@@ -45,28 +45,57 @@ _recent_reference_images: dict[str, dict] = {}
 
 
 def cache_reference_image(chat_id: str, image_path: str, message_id: str = "", ttl_seconds: int | None = None) -> None:
-    """缓存某个群/会话最近一张参考图。"""
+    """缓存某个群/会话最近一张参考图（文件系统+内存双写，兼容多 worker）。"""
+    meta = {
+        "path": image_path,
+        "message_id": message_id,
+        "timestamp": time.time(),
+        "ttl": ttl_seconds or Config.REFERENCE_IMAGE_TTL_SECONDS,
+    }
+    # 内存缓存（本 worker 快速读取）
     with _reference_lock:
-        _recent_reference_images[chat_id] = {
-            "path": image_path,
-            "message_id": message_id,
-            "timestamp": time.time(),
-            "ttl": ttl_seconds or Config.REFERENCE_IMAGE_TTL_SECONDS,
-        }
+        _recent_reference_images[chat_id] = meta
+    # 文件系统缓存（跨 worker 共享）
+    try:
+        ref_dir = Path(Config.REFERENCE_IMAGE_DIR)
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / f"ref_meta_{chat_id}.json").write_text(
+            json.dumps(meta), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 def get_recent_reference_image(chat_id: str, ttl_seconds: int | None = None) -> str | None:
-    """获取某个群/会话仍有效的最近参考图路径。"""
+    """获取某个群/会话仍有效的最近参考图路径（先读内存，再读文件系统）。"""
+    # 1. 先尝试内存缓存（本 worker）
     with _reference_lock:
         item = _recent_reference_images.get(chat_id)
-        if not item:
-            return None
-        ttl = ttl_seconds or item.get("ttl") or Config.REFERENCE_IMAGE_TTL_SECONDS
-        path = item.get("path")
-        if time.time() - item.get("timestamp", 0) > ttl or not path or not os.path.exists(path):
+        if item:
+            ttl = ttl_seconds or item.get("ttl") or Config.REFERENCE_IMAGE_TTL_SECONDS
+            path = item.get("path")
+            if time.time() - item.get("timestamp", 0) <= ttl and path and os.path.exists(path):
+                return path
             _recent_reference_images.pop(chat_id, None)
+
+    # 2. 回退到文件系统缓存（其他 worker 写入）
+    try:
+        ref_dir = Path(Config.REFERENCE_IMAGE_DIR)
+        meta_path = ref_dir / f"ref_meta_{chat_id}.json"
+        if not meta_path.exists():
             return None
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        ttl = ttl_seconds or meta.get("ttl") or Config.REFERENCE_IMAGE_TTL_SECONDS
+        path = meta.get("path")
+        if time.time() - meta.get("timestamp", 0) > ttl or not path or not os.path.exists(path):
+            meta_path.unlink(missing_ok=True)
+            return None
+        # 同步到内存
+        with _reference_lock:
+            _recent_reference_images[chat_id] = meta
         return path
+    except Exception:
+        return None
 
 
 def _extract_image_key(content: dict) -> str:
