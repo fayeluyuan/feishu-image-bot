@@ -1,23 +1,22 @@
 """
-图片生成适配器
-v3.0: 默认直连烈鸟 API（Gemini-3-Pro）；用户指定 image2/gpt-image-2 时切换烈鸟 image2 分组。
-      Hermes CLI 保留为兜底方案。
+图片生成适配器（插件化架构 v3.0）
+自动检测并调用已配置的图片生成服务
 """
 import logging
 
-from config import Config
-from hermes_client import HermesMediaGenerator
-from lieniao_client import LieniaoImageGenerator
+from providers import GenerationResult
+from providers.registry import get_available_providers, get_provider
 
 logger = logging.getLogger(__name__)
 
 
 class ImageGenerator:
-    """图片生成器"""
+    """图片生成器 - 自动调度多个提供商"""
 
     def __init__(self):
-        self._lieniao = LieniaoImageGenerator()
-        self._hermes = HermesMediaGenerator()
+        self._providers = get_available_providers()
+        if not self._providers:
+            logger.error("[ImageGen] 错误：未配置任何图片生成服务！请检查 .env 文件")
 
     def generate(
         self,
@@ -25,41 +24,67 @@ class ImageGenerator:
         aspect_ratio: str = "portrait",
         target_size: list | None = None,
         reference_images: list[str] | None = None,
+        preferred_provider: str | None = None,
     ) -> dict:
         """
-        生成图片。优先烈鸟 API，失败时可按配置 fallback 到 Hermes。
+        生成图片，自动选择已配置的提供商
 
-        返回 dict:
-        {
-            "success": bool,
-            "image_path": str | None,
-            "tool_used": str,
-            "error": str | None,
-        }
+        Args:
+            prompt: 用户提示词
+            aspect_ratio: 比例关键词
+            target_size: 自定义尺寸 [宽, 高]
+            reference_images: 参考图路径列表
+            preferred_provider: 优先使用的提供商名称（如 "openai", "lieniao"）
+
+        Returns:
+            dict: {"success": bool, "image_path": str|None, "tool_used": str, "error": str|None}
         """
-        if self._lieniao.is_configured():
-            logger.info(f"[ImageGen] 通过烈鸟 API 生成图片: {prompt[:50]}... 比例={aspect_ratio}")
-            result = self._lieniao.generate(prompt, aspect_ratio, target_size, reference_images=reference_images)
-            if result.success:
-                return {
-                    "success": True,
-                    "image_path": result.image_path,
-                    "tool_used": result.tool_used,
-                    "error": None,
-                }
-            logger.warning(f"[ImageGen] 烈鸟 API 失败: {result.error}")
-            if not Config.FALLBACK_TO_HERMES:
-                return {
-                    "success": False,
-                    "image_path": None,
-                    "tool_used": result.tool_used,
-                    "error": result.error,
-                }
+        # 获取提供商实例
+        provider = get_provider(preferred_provider)
+        if not provider:
+            return {
+                "success": False,
+                "image_path": None,
+                "tool_used": "",
+                "error": "未配置任何图片生成服务。请在 .env 中配置至少一个 API Key：\n"
+                        "- LIENIAO_GEMINI_API_KEY 或 LIENIAO_IMAGE2_API_KEY（烈鸟）\n"
+                        "- OPENAI_API_KEY（OpenAI 官方）\n"
+                        "- DASHSCOPE_API_KEY（阿里云百炼）",
+            }
 
-        logger.info(f"[ImageGen] 通过 Hermes 兜底生成图片: {prompt[:50]}... 比例={aspect_ratio}")
-        if reference_images:
-            logger.warning("[ImageGen] Hermes 兜底暂不支持参考图，将按纯文本请求生成")
-        return self._hermes.generate_image(prompt, aspect_ratio, target_size)
+        logger.info(f"[ImageGen] 使用提供商 '{provider.name}' 生成图片: {prompt[:50]}...")
+
+        # 调用生成
+        result: GenerationResult = provider.generate(
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            target_size=target_size,
+            reference_images=reference_images,
+        )
+
+        # 如果失败且有其他提供商，尝试 fallback
+        if not result.success and len(self._providers) > 1:
+            logger.warning(f"[ImageGen] {provider.name} 失败，尝试其他提供商...")
+            for cls in self._providers:
+                if cls.name == provider.name:
+                    continue
+                fallback = cls()
+                logger.info(f"[ImageGen] Fallback 到 {fallback.name}")
+                result = fallback.generate(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    target_size=target_size,
+                    reference_images=reference_images,
+                )
+                if result.success:
+                    break
+
+        return {
+            "success": result.success,
+            "image_path": result.image_path,
+            "tool_used": result.tool_used,
+            "error": result.error,
+        }
 
 
 def get_image_generator() -> ImageGenerator:

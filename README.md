@@ -40,8 +40,19 @@ feishu-image-bot/
 ## 前置条件
 
 1. **飞书应用**：在[飞书开放平台](https://open.feishu.cn/app)创建应用，获取 App ID / App Secret
-2. **烈鸟 API 密钥**：在[烈鸟官网](https://lnapi.com)注册，获取 API Key（支持 Gemini 和 OpenAI 兼容两种端点）
+2. **至少一个图片生成 API**：支持烈鸟 / OpenAI / 阿里云百炼等（见下方支持列表）
 3. **公网服务器**（或内网穿透）：飞书事件订阅需要回调到你的服务地址
+
+## 支持的图片生成服务
+
+| 服务 | 环境变量 | 说明 |
+|------|---------|------|
+| **烈鸟 API** | `LIENIAO_GEMINI_API_KEY` | 推荐，性价比高，支持 Gemini-3-Pro + gpt-image-2 |
+| **OpenAI 官方** | `OPENAI_API_KEY` | DALL-E 3，质量好但价格较高 |
+| **阿里云百炼** | `DASHSCOPE_API_KEY` | 通义万相，国内网络稳定 |
+| **自定义** | 自己写插件 | 放在 `PROVIDERS_DIR` 目录，自动加载 |
+
+> 可同时配置多个服务，一个失败时自动 fallback 到下一个
 
 ## 快速开始
 
@@ -64,25 +75,28 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，填入你的密钥
+# 编辑 .env 文件，填入你的密钥（至少填一个生图服务）
 ```
 
-`.env` 中需要填写的关键配置：
+`.env` 中最简配置示例（只填你想用的）：
 
 ```env
-# 飞书应用（在飞书开放平台创建应用后获取）
+# 飞书应用（必填）
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
 FEISHU_APP_SECRET=xxxxxx...xxxx
 
-# 烈鸟 API（二选一或都填，推荐 Gemini 后端性价比高）
+# 烈鸟 API（推荐，二选一或都填）
 LIENIAO_GEMINI_API_KEY=your_lieniao_key_here
 LIENIAO_IMAGE2_API_KEY=your_lieniao_key_here
 
-# 默认后端：gemini 或 image2
-LIENIAO_DEFAULT_BACKEND=gemini
+# 或者 OpenAI 官方
+# OPENAI_API_KEY=sk-your-openai-key
+
+# 或者阿里云百炼
+# DASHSCOPE_API_KEY=sk-your-dashscope-key
 ```
 
-> **注意**：本项目不直接依赖 OpenAI API，通过烈鸟 API 调用 Gemini 3 Pro / gpt-image-2 等模型。
+> **注意**：填了哪个服务的 Key，系统就自动调用哪个。支持同时填多个，失败时自动切换。
 
 ### 4. 启动服务
 
@@ -172,9 +186,10 @@ gunicorn -w 2 -b 0.0.0.0:5000 "src.app:create_app()"
 |---------|------|------|
 | `FEISHU_APP_ID` | 飞书应用 ID | 是 |
 | `FEISHU_APP_SECRET` | 飞书应用密钥 | 是 |
-| `LIENIAO_GEMINI_API_KEY` | 烈鸟 Gemini 端点密钥 | 否（二选一） |
-| `LIENIAO_IMAGE2_API_KEY` | 烈鸟 Image2 (OpenAI兼容) 密钥 | 否（二选一） |
-| `LIENIAO_DEFAULT_BACKEND` | 默认后端：`gemini` 或 `image2` | 否（默认 `gemini`） |
+| `LIENIAO_GEMINI_API_KEY` | 烈鸟 Gemini 端点密钥 | 否（至少填一个生图服务） |
+| `LIENIAO_IMAGE2_API_KEY` | 烈鸟 Image2 (OpenAI兼容) 密钥 | 否 |
+| `OPENAI_API_KEY` | OpenAI 官方 API 密钥 | 否 |
+| `DASHSCOPE_API_KEY` | 阿里云百炼 API 密钥 | 否 |
 | `DEFAULT_ASPECT_RATIO` | 默认比例 | 否（默认 `portrait`） |
 | `PORT` | 服务端口 | 否（默认 5000） |
 
