@@ -1,6 +1,6 @@
 """
 Flask 主应用
-处理飞书 webhook：事件订阅验证、消息接收、调用 Hermes 生图/生视频、回复用户
+处理飞书 webhook：事件订阅验证、消息接收、调用图片生成服务、回复用户
 """
 import json
 import logging
@@ -258,7 +258,7 @@ def _handle_image_request(chat_id: str, message_id: str, text: str, reference_im
             _safe_text_content(f"🎨 正在生成图片（{size_display}{ref_hint}），请稍候...")
         )
 
-        # 4. 调用 Hermes 生成图片
+        # 4. 调用图片生成服务
         generator = get_image_generator()
         result = generator.generate(
             prompt=text,
