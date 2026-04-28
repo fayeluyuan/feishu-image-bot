@@ -1,5 +1,6 @@
 # 环境变量（包含敏感信息）
 .env
+.env.bak*
 
 # Python
 __pycache__/
@@ -42,9 +43,20 @@ Thumbs.db
 
 # 日志
 *.log
+gunicorn.log
 logs/
 
 # 临时文件
 tmp/
 temp/
 *.tmp
+src/~syncthing~*.tmp
+
+# 同步工具
+.stfolder/
+
+# 内部任务文档（不适合开源）
+tasks/
+
+# 生成输出目录
+outputs/
