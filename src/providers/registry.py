@@ -6,7 +6,14 @@ import importlib
 import inspect
 import logging
 import os
+import sys
 from pathlib import Path
+
+# 确保 .env 被加载（providers 包被直接导入时）
+env_path = Path(__file__).parent.parent.parent / ".env"
+if env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=env_path)
 
 from providers import BaseProvider
 

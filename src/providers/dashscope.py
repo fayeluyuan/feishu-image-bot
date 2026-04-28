@@ -11,6 +11,12 @@ from typing import Optional
 
 import requests
 
+# 确保 .env 被加载（直接运行此文件时）
+env_path = Path(__file__).parent.parent.parent / ".env"
+if env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=env_path)
+
 from providers import BaseProvider, GenerationResult
 
 logger = logging.getLogger(__name__)
