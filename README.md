@@ -37,12 +37,29 @@ feishu-image-bot/
 └── run.py                  # 一键启动脚本
 ```
 
+## 前置条件
+
+本项目依赖 **Hermes Agent** 作为 AI 调用中枢。在部署前，请确保：
+
+1. **已安装 Hermes Agent**（CLI 命令 `hermes` 可用）
+   - Hermes 是本项目作者的 AI Agent 基础设施，负责调度各种生图/生视频工具
+   - 如果你还没有 Hermes，需要先部署：[hermes-agent 部署指南](https://github.com/hermes-agent/hermes)
+   - 或者你可以修改 `src/hermes_client.py`，将调用改为直接请求烈鸟/OpenAI API
+
+2. **有可用的生图 API 密钥**（至少一种）
+   - 烈鸟 API（Gemini / OpenAI 兼容端点）
+   - 或 OpenAI API Key
+   - 或即梦、Nano Banana 等其他支持的工具
+
+3. **有公网可访问的服务器**（或内网穿透）
+   - 飞书事件订阅需要回调到你的服务地址
+
 ## 快速开始
 
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/yourname/feishu-image-bot.git
+git clone https://github.com/fayeluyuan/feishu-image-bot.git
 cd feishu-image-bot
 ```
 
